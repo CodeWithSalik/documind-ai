@@ -1,0 +1,259 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Users & Auth ───────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  workspaces    Workspace[]
+  memberships   WorkspaceMember[]
+  documents     Document[]
+  conversations Conversation[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// ─── Workspaces ─────────────────────────────────────────
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  ownerId   String
+  plan      Plan     @default(FREE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner         User               @relation(fields: [ownerId], references: [id])
+  members       WorkspaceMember[]
+  documents     Document[]
+  conversations Conversation[]
+  folders       Folder[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String   @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        Role     @default(MEMBER)
+  joinedAt    DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+  @@map("workspace_members")
+}
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum Role {
+  OWNER
+  MEMBER
+  VIEWER
+}
+
+// ─── Documents ──────────────────────────────────────────
+
+model Folder {
+  id          String   @id @default(cuid())
+  name        String
+  workspaceId String
+  parentId    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent    Folder?    @relation("FolderTree", fields: [parentId], references: [id])
+  children  Folder[]   @relation("FolderTree")
+  documents Document[]
+
+  @@map("folders")
+}
+
+model Document {
+  id           String         @id @default(cuid())
+  name         String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String         @unique
+  status       DocumentStatus @default(PENDING)
+  pageCount    Int?
+  wordCount    Int?
+  metadata     Json?
+  errorMessage String?
+  workspaceId  String
+  folderId     String?
+  uploadedById String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  processedAt  DateTime?
+
+  workspace     Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  folder        Folder?                @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  uploadedBy    User                   @relation(fields: [uploadedById], references: [id])
+  chunks        DocumentChunk[]
+  conversations ConversationDocument[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, folderId])
+  @@map("documents")
+}
+
+model DocumentChunk {
+  id         String @id @default(cuid())
+  documentId String
+  index      Int
+  content    String @db.Text
+  pageNumber Int?
+  metadata   Json?
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, index])
+  @@index([documentId])
+  @@map("document_chunks")
+}
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  READY
+  ERROR
+}
+
+// ─── Conversations ──────────────────────────────────────
+
+model Conversation {
+  id          String   @id @default(cuid())
+  title       String?
+  model       String   @default("gemini-1.5-flash")
+  workspaceId String
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User                   @relation(fields: [userId], references: [id])
+  messages  Message[]
+  documents ConversationDocument[]
+
+  @@index([workspaceId, userId])
+  @@map("conversations")
+}
+
+model ConversationDocument {
+  id             String @id @default(cuid())
+  conversationId String
+  documentId     String
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  document     Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, documentId])
+  @@map("conversation_documents")
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  role           MessageRole
+  content        String      @db.Text
+  model          String?
+  tokenCount     Int?
+  metadata       Json?
+  createdAt      DateTime    @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  artifacts    Artifact[]
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+// ─── Artifacts ──────────────────────────────────────────
+
+model Artifact {
+  id         String       @id @default(cuid())
+  name       String
+  type       ArtifactType
+  mimeType   String
+  sizeBytes  Int?
+  storageKey String       @unique
+  messageId  String
+  metadata   Json?
+  createdAt  DateTime     @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("artifacts")
+}
+
+enum ArtifactType {
+  DOCUMENT
+  SPREADSHEET
+  CODE
+  CHART
+  MARKDOWN
+  OTHER
+}

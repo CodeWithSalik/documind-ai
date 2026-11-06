@@ -4,6 +4,8 @@ import { auth } from "@/auth";
 import { WorkspaceClientLayout } from "@/components/layout/workspace-client-layout";
 import { Sparkles } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+
 async function AuthenticatedWorkspaceShell({
   children,
 }: {
